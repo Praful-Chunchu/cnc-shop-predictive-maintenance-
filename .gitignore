@@ -1,0 +1,22 @@
+# Environment
+.venv/
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# Jupyter
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+
+# Data and models (source of truth is GCS and the pipeline)
+data/**/*.csv
+models/*
+!models/.gitkeep
+
+# Experiment tracking
+mlruns/
+mlartifacts/
