@@ -1,0 +1,26 @@
+data:
+  raw_path: data/raw/ai4i2020.csv
+  cleaned_path: data/cleaned/ai4i2020_cleaned.csv
+
+features:
+  target: machine_failure
+  categorical: [type]
+  numeric: [air_temp_k, process_temp_k, rotational_speed_rpm, torque_nm, tool_wear_min, temp_diff, power, strain]
+  type_order: [L, M, H]
+
+split:
+  test_size: 0.15
+  val_size: 0.15
+  random_state: 42
+  stratify: true
+
+model:
+  type: random_forest
+  path: models/model.joblib
+  params:
+    n_estimators: 200
+    max_depth: 10
+    class_weight: balanced
+
+evaluation:
+  primary_metric: f2
