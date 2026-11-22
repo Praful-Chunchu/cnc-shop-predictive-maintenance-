@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-TARGET = "Machine failure"
+TARGET = "machine_failure"
 
 # UDI and Product ID are just identifiers
 ID_COLS = ["UDI", "Product ID"]
@@ -10,11 +10,11 @@ ID_COLS = ["UDI", "Product ID"]
 FAILURE_COLS = ["TWF", "HDF", "PWF", "OSF", "RNF"]
 
 INPUT_COLS = [
-    "Air temperature [K]",
-    "Process temperature [K]",
-    "Rotational speed [rpm]",
-    "Torque [Nm]",
-    "Tool wear [min]",
+    "air_temp_k",
+    "process_temp_k",
+    "rotational_speed_rpm",
+    "torque_nm",
+    "tool_wear_min",
 ]
 
 ENGINEERED_COLS = ["temp_diff", "power", "strain"]
@@ -28,12 +28,12 @@ def add_engineered_features(df):
     df = df.copy()
 
     # heat dissipation failure (HDF)
-    df["temp_diff"] = df["Process temperature [K]"] - df["Air temperature [K]"]
+    df["temp_diff"] = df["process_temp_k"] - df["air_temp_k"]
 
     # power failure (PWF), rpm converted to rad/s so power is in watts
-    df["power"] = df["Torque [Nm]"] * (df["Rotational speed [rpm]"] * 2 * np.pi / 60)
+    df["power"] = df["torque_nm"] * (df["rotational_speed_rpm"] * 2 * np.pi / 60)
 
     # overstrain failure (OSF)
-    df["strain"] = df["Tool wear [min]"] * df["Torque [Nm]"]
+    df["strain"] = df["tool_wear_min"] * df["torque_nm"]
 
     return df

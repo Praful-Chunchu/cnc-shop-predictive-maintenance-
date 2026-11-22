@@ -1,0 +1,34 @@
+import pandas as pd
+
+from src.features import drop_unused_columns
+
+RAW_PATH = "data/raw/ai4i2020.csv"
+CLEANED_PATH = "data/cleaned/ai4i2020_cleaned.csv"
+
+# no spaces or brackets so the API can use these as JSON keys
+RENAME_MAP = {
+    "Type": "type",
+    "Air temperature [K]": "air_temp_k",
+    "Process temperature [K]": "process_temp_k",
+    "Rotational speed [rpm]": "rotational_speed_rpm",
+    "Torque [Nm]": "torque_nm",
+    "Tool wear [min]": "tool_wear_min",
+    "Machine failure": "machine_failure",
+}
+
+
+def load_raw(path=RAW_PATH):
+    return pd.read_csv(path)
+
+
+def clean(df):
+    df = drop_unused_columns(df)
+    df = df.rename(columns=RENAME_MAP)
+    return df
+
+
+if __name__ == "__main__":
+    raw_df = load_raw()
+    cleaned_df = clean(raw_df)
+    cleaned_df.to_csv(CLEANED_PATH, index=False)
+    print(f"Saved {cleaned_df.shape[0]} rows, {cleaned_df.shape[1]} columns to {CLEANED_PATH}")
