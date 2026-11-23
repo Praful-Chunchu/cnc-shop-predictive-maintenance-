@@ -1,4 +1,5 @@
 import pandas as pd
+from google.cloud import storage
 
 from src.features import drop_unused_columns
 
@@ -25,6 +26,17 @@ def clean(df):
     df = drop_unused_columns(df)
     df = df.rename(columns=RENAME_MAP)
     return df
+
+def download_from_gcs(bucket_name, blob_name, local_path):
+
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(blob_name)
+    blob.download_to_filename(local_path)
+    print(f"Downloaded gs://{bucket_name}/{blob_name} to {local_path}")
+
+
+
 
 
 if __name__ == "__main__":

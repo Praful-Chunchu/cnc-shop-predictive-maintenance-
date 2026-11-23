@@ -18,12 +18,16 @@ from sklearn.metrics import (
 )
 import mlflow
 import mlflow.sklearn
+from src.data import download_from_gcs
 
 
 def main():
 
+
     with open("config.yaml") as f:
         config = yaml.safe_load(f)
+
+    download_from_gcs(config["data"]["gcs_bucket"], config["data"]["gcs_cleaned_blob"], config["data"]["cleaned_path"])
 
     mlflow.set_experiment(config["mlflow"]["experiment_name"])
 
