@@ -24,3 +24,7 @@ model:
 
 evaluation:
   primary_metric: f2
+  threshold: 0.5
+
+mlflow:
+  experiment_name: cnc-failure-prediction
