@@ -1,0 +1,9 @@
+.venv/
+.git/
+mlruns/
+data/
+notebooks/
+app/
+__pycache__/
+.ipynb_checkpoints/
+.DS_Store
