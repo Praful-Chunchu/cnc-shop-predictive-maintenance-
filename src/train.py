@@ -16,6 +16,9 @@ from sklearn.metrics import (
     confusion_matrix,
     ConfusionMatrixDisplay
 )
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import mlflow
 import mlflow.sklearn
 from src.data import download_from_gcs
@@ -99,6 +102,22 @@ def main():
         print(f"Accuracy:  {acc:.3f}")
         print("Confusion matrix:")
         print(cm)
+
+        fig, ax = plt.subplots()
+        ConfusionMatrixDisplay(cm, display_labels=["No failure", "Failure"]).plot(ax=ax, colorbar=False)
+        ax.set_title("Validation confusion matrix")
+        mlflow.log_figure(fig, "confusion_matrix.png")
+        plt.close(fig)
+
+        feature_names = [name.split("__")[1] for name in pipeline.named_steps["preprocessor"].get_feature_names_out()]
+        importances = pd.Series(pipeline.named_steps["model"].feature_importances_, index=feature_names).sort_values()
+        fig, ax = plt.subplots()
+        importances.plot.barh(ax=ax)
+        ax.set_title("Feature importance")
+        ax.set_xlabel("Importance")
+        fig.tight_layout()
+        mlflow.log_figure(fig, "feature_importance.png")
+        plt.close(fig)
 
         mlflow.sklearn.log_model(pipeline, name="model", input_example=X_train.head(5))
         mlflow.log_artifact("config.yaml")
