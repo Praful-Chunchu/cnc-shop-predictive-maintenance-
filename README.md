@@ -4,10 +4,10 @@
 
 | | Link |
 |---|---|
-| 🖥️ **Live app** (Streamlit) | `TODO: paste your *.streamlit.app link` |
-| ⚙️ **Live API** (Cloud Run) | https://cnc-api-943785405592.us-central1.run.app |
-| 📄 **Interactive API docs** | https://cnc-api-943785405592.us-central1.run.app/docs |
-| 📊 **Dataset** | [AI4I 2020 Predictive Maintenance (UCI)](https://archive.ics.uci.edu/dataset/601) |
+| **Live app** (Streamlit) | https://cnc-failure-predictor.streamlit.app |
+| **Live API** (Cloud Run) | https://cnc-api-943785405592.us-central1.run.app |
+| **Interactive API docs** | https://cnc-api-943785405592.us-central1.run.app/docs |
+| **Dataset** | [AI4I 2020 Predictive Maintenance (UCI)](https://archive.ics.uci.edu/dataset/601) |
 
 ---
 
@@ -804,9 +804,11 @@ Work was done on feature branches named `type/short-description`, each merged in
 | #4 | `feature/fastapi-predict` | FastAPI `/predict` endpoint and health check |
 | #5 | `feature/docker` | Dockerfile and .dockerignore |
 | #6 | `feature/gcs-data-storage` | Cloud Storage download in the pipeline |
-| #7 | `feature/streamlit-frontend` | Streamlit app with live predictions and an explanation panel |
+| #7 | `feature/streamlit-frontend` | Streamlit app with synced inputs and an explanation panel |
 | #8 | `feature/plots-and-input-validation` | MLflow plots, product type validation in the API, config driven cleaning paths |
 | #9 | `docs/readme` | This README and its charts |
+| #10 | `docs/readme` | Anonymous download from the public bucket, first version of the run instructions |
+| #11 | `docs/final-touches` | How to Run section, live app link |
 
 **Reproducibility practices**
 1. All settings in `config.yaml`, logged with every MLflow run
