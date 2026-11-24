@@ -9,6 +9,23 @@
 | **Interactive API docs** | https://cnc-api-943785405592.us-central1.run.app/docs |
 | **Dataset** | [AI4I 2020 Predictive Maintenance (UCI)](https://archive.ics.uci.edu/dataset/601) |
 
+### What's in this project
+
+| Stage | What was built | Tools |
+|---|---|---|
+| **Data** | Cleaned dataset hosted in a public cloud bucket; the pipeline downloads it on every run | Google Cloud Storage |
+| **Pipeline** | Config driven preprocessing, 3 engineered features, stratified train/validation/test split, random forest | Python, pandas, scikit-learn, `config.yaml` |
+| **Tracking** | Every run logs params, metrics, the model, plots and its config | MLflow |
+| **API** | `POST /predict` with input validation, plus a health check | FastAPI, Uvicorn, Pydantic |
+| **Container** | One image with serving and training entry points | Docker |
+| **Deployment** | Public HTTPS API with cost caps | Google Artifact Registry, Cloud Run |
+| **Frontend** | Inputs with synced sliders, failure probability, and an explanation of what's driving the risk | Streamlit Community Cloud |
+| **Workflow** | Feature branches, each merged through a pull request | Git, GitHub |
+
+```
+UCI data → clean → Cloud Storage → train (MLflow) → Docker image → Cloud Run API → Streamlit app
+```
+
 ---
 
 ## How to Run
