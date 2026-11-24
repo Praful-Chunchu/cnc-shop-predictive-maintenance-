@@ -11,12 +11,14 @@
 
 ---
 
-## Quick Start
+## How to Run
 
-### Try it with no setup
+There are three ways to run this project, from quickest to most complete.
+
+### Option 1: Use the live deployment (no installation)
 
 1. Open the **live app** (link above), enter machine settings, and click **Predict**.
-2. Or call the **live API** directly:
+2. Call the **live API** directly with curl:
 
 ```bash
 curl -X POST https://cnc-api-943785405592.us-central1.run.app/predict \
@@ -24,7 +26,7 @@ curl -X POST https://cnc-api-943785405592.us-central1.run.app/predict \
   -d '{"type": "L", "air_temp_k": 298.2, "process_temp_k": 308.7, "rotational_speed_rpm": 1408, "torque_nm": 46.3, "tool_wear_min": 3}'
 ```
 
-### Run everything locally
+### Option 2: Run locally
 
 No Google account is needed: the training data lives in a **publicly readable** Cloud Storage bucket, and the pipeline downloads it automatically. Requires Python 3.9.
 
@@ -48,9 +50,9 @@ streamlit run app/streamlit_app.py     # frontend at http://localhost:8501 (call
 mlflow ui --port 5001                  # tracked runs at http://localhost:5001
 ```
 
-### Run with Docker
+### Option 3: Run with Docker
 
-Train first (above) so the model file exists, then:
+Train first (Option 2) so the model file exists, then:
 
 ```bash
 docker build --platform linux/amd64 -t cnc-api .
