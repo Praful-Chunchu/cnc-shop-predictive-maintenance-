@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import FastAPI
 from pydantic import BaseModel
 import yaml
@@ -14,7 +16,7 @@ model = joblib.load(config["model"]["path"])
 
 # Pydantic model to ensure inputs follow specific valid data types
 class MachineInput(BaseModel):
-    type: str
+    type: Literal["L", "M", "H"]
     air_temp_k: float
     process_temp_k: float
     rotational_speed_rpm: float
