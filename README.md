@@ -11,6 +11,56 @@
 
 ---
 
+## Quick Start
+
+### Try it with no setup
+
+1. Open the **live app** (link above), enter machine settings, and click **Predict**.
+2. Or call the **live API** directly:
+
+```bash
+curl -X POST https://cnc-api-943785405592.us-central1.run.app/predict \
+  -H "Content-Type: application/json" \
+  -d '{"type": "L", "air_temp_k": 298.2, "process_temp_k": 308.7, "rotational_speed_rpm": 1408, "torque_nm": 46.3, "tool_wear_min": 3}'
+```
+
+### Run everything locally
+
+No Google account is needed: the training data lives in a **publicly readable** Cloud Storage bucket, and the pipeline downloads it automatically. Requires Python 3.9.
+
+```bash
+git clone https://github.com/Praful-Chunchu/cnc-shop-predictive-maintenance-.git
+cd cnc-shop-predictive-maintenance-
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+python -m src.train                    # download data from the bucket, train, log to MLflow, save the model
+uvicorn api.main:app --port 8000       # serve the API at http://localhost:8000/docs
+```
+
+In separate terminals (with the venv active):
+
+```bash
+pip install -r app/requirements.txt
+streamlit run app/streamlit_app.py     # frontend at http://localhost:8501 (calls the live API)
+
+mlflow ui --port 5001                  # tracked runs at http://localhost:5001
+```
+
+### Run with Docker
+
+Train first (above) so the model file exists, then:
+
+```bash
+docker build --platform linux/amd64 -t cnc-api .
+docker run -p 8000:8080 cnc-api        # API at http://localhost:8000/docs
+```
+
+Full explanations of every step are in [Setup and Usage](#11-setup-and-usage).
+
+---
+
 ## Table of Contents
 
 1. [Overview](#1-overview)
@@ -28,7 +78,6 @@
 13. [Cloud Services Used](#13-cloud-services-used)
 14. [Development Workflow](#14-development-workflow)
 15. [Ethics, Limitations and Future Work](#15-ethics-limitations-and-future-work)
-16. [Assignment Requirements Checklist](#16-assignment-requirements-checklist)
 
 ---
 
@@ -223,7 +272,6 @@ The encoder lives **inside** the saved pipeline, so the API can never forget to 
 1. **Handles patterns on both ends.** Power failures happen when power is too low **or** too high. A linear model like logistic regression draws one straight boundary and struggles with this. Trees simply split twice.
 2. **No feature scaling needed.** Torque in the 40s and power in the thousands work as is.
 3. **Built in feature importance** for explaining predictions.
-4. Listed among the suggested models in the assignment.
 
 ### Settings (from `config.yaml`)
 
@@ -306,8 +354,6 @@ Speed, torque and tool wear drive most predictions, matching the EDA. The engine
 | Small temperature gap, low speed, worn tool, high torque | L, 302.1 K, 310.1 K, 1,301 rpm, 60.9 Nm, 220 min | **91.9%** |
 
 The second case trips two documented rules at once: a temperature gap of 8.0 K at under 1,380 rpm (heat dissipation), and strain of 13,394, above the 11,000 limit for type L (overstrain).
-
-> **Note:** the assignment does not grade model quality. The focus of this project is the pipeline, reproducibility and deployment.
 
 ---
 
@@ -440,7 +486,7 @@ cnc-shop-predictive-maintenance/
 | Git | Cloning the repo |
 | Docker Desktop | Building and running the container |
 | Google Cloud CLI (`gcloud`) | Cloud Storage, Artifact Registry, Cloud Run |
-| A Google Cloud project with billing enabled | Only needed for cloud steps |
+| A Google Cloud project with billing enabled | Only needed to host your own data or deploy your own copy |
 
 ### 11.2 Clone and install
 
@@ -454,6 +500,8 @@ pip install -r requirements.txt
 ```
 
 ### 11.3 Prepare the data
+
+**The cleaned data is already hosted in a public bucket,** so you can skip straight to [11.4](#114-train-the-model). The steps below show how it got there, or how to host it in your own bucket.
 
 **1. Download the raw data** from [UCI](https://archive.ics.uci.edu/dataset/601) and save it as `data/raw/ai4i2020.csv`.
 
@@ -474,16 +522,22 @@ gcloud storage buckets create gs://<YOUR_BUCKET> --location=us-central1
 gcloud storage cp data/cleaned/ai4i2020_cleaned.csv gs://<YOUR_BUCKET>/cleaned/ai4i2020_cleaned.csv
 ```
 
-Then set `gcs_bucket` in `config.yaml` to your bucket name.
+**4. Make it publicly readable** (read only: nobody else can upload, change or delete files):
 
-> **Note on access:** the original bucket (`cnc-pm-data-praful`) is private. To reproduce training, create your own bucket as shown above, or skip the cloud step by commenting out the `download_from_gcs(...)` line in `src/train.py` and training from the local cleaned CSV.
+```bash
+gcloud storage buckets add-iam-policy-binding gs://<YOUR_BUCKET> \
+  --member=allUsers --role=roles/storage.objectViewer
+```
+
+Then set `gcs_bucket` in `config.yaml` to your bucket name.
 
 ### 11.4 Train the model
 
 ```bash
-gcloud auth application-default login    # lets Python code access Cloud Storage
 python -m src.train
 ```
+
+No Google login is needed. Because the bucket is publicly readable, `download_from_gcs()` in `src/data.py` uses an anonymous client.
 
 **What happens:**
 1. Downloads the cleaned CSV from the bucket
@@ -506,8 +560,6 @@ F1:        0.839
 Accuracy:  0.990
 Model saved to models/model.joblib
 ```
-
-**Why two logins:** `gcloud auth login` is for the terminal commands. `gcloud auth application-default login` creates credentials that Python libraries read automatically.
 
 **Run scripts with `python -m` from the repo root** so imports like `from src.features import ...` resolve correctly.
 
@@ -551,19 +603,19 @@ Then test at http://localhost:8000/docs. `-p 8000:8080` connects port 8000 on yo
 
 ```bash
 docker run --rm \
-  -v "$HOME/.config/gcloud:/root/.config/gcloud:ro" \
-  -e GOOGLE_CLOUD_PROJECT=<YOUR_PROJECT_ID> \
   -v "$(pwd)/data:/app/data" \
   -v "$(pwd)/models:/app/models" \
   cnc-api python -m src.train
 ```
 
-| Flag | Why |
+| Part | Why |
 |---|---|
-| `-v ~/.config/gcloud:...:ro` | Shares your Google credentials (read only) so the container can download from the bucket |
-| `-e GOOGLE_CLOUD_PROJECT` | Tells the storage library which project to use |
+| `python -m src.train` | Overrides the default command, so the container trains instead of serving |
 | `-v data:/app/data` | Gives the container a folder to save the downloaded CSV into |
 | `-v models:/app/models` | Saves the newly trained model back to your computer |
+| `--rm` | Removes the container when training finishes |
+
+No credentials are needed, since the bucket is publicly readable.
 
 **How the Dockerfile works**
 
@@ -669,8 +721,8 @@ Opens at http://localhost:8501. The app calls the **live Cloud Run API**, so it 
 
 **How the app works**
 
-1. **Inputs:** the user picks a product type and moves sliders for the 5 numeric inputs. Slider ranges match the training data.
-2. **Live prediction:** every change sends the 6 values as JSON to the live `/predict` endpoint. The app shows the failure probability, a progress bar, and a clear high risk or low risk message. Repeated inputs are cached for 5 minutes, so the same settings don't call the API twice.
+1. **Inputs:** the user picks a product type, then sets the 5 numeric inputs by **typing a value or dragging a slider**. Each box and its slider stay in sync, and both are limited to the ranges seen in the training data.
+2. **Prediction:** clicking **Predict** sends the 6 values as JSON to the live `/predict` endpoint. The app shows the failure probability, a progress bar, and a clear high risk or low risk message. If any input changes afterward, the app keeps the last result on screen and notes that it needs updating.
 3. **"What's driving this prediction":** a panel shows the values behind each documented failure rule (temperature gap, power, strain, tool wear), each marked OK or at risk against its limit. An operator who sees a high risk also sees **why**, for example "strain 13,394, above the 11,000 limit for type L," and knows what to fix.
 4. **Transparency:** an expandable section shows the exact request sent to the API.
 
@@ -724,7 +776,7 @@ Predicts the failure risk for one machine run. The client sends only the **6 raw
 
 | Service | Role in this project |
 |---|---|
-| **Google Cloud Storage** | Hosts the cleaned dataset (`gs://cnc-pm-data-praful/cleaned/`). The training pipeline downloads it at the start of every run. |
+| **Google Cloud Storage** | Hosts the cleaned dataset (`gs://cnc-pm-data-praful/cleaned/`), publicly readable. The training pipeline downloads it at the start of every run, with no login required. |
 | **Artifact Registry** | Stores the Docker image (`cnc-repo/cnc-api`) so Cloud Run can pull it |
 | **Google Cloud Run** | Runs the API container and provides the public HTTPS URL. Scales to zero when idle. |
 | **Streamlit Community Cloud** | Hosts the frontend for free |
@@ -778,8 +830,7 @@ Work was done on feature branches named `type/short-description`, each merged in
 3. **Random failures can't be predicted.** By design, about 0.1% of runs fail regardless of conditions.
 4. **Inputs outside the training ranges** may give unreliable predictions. The app's sliders are limited to the ranges seen in the data, but the API accepts any number for the 5 numeric inputs.
 5. **Validation scores only.** The test set is held out and has not yet been used for a final score.
-6. **Public, unauthenticated API.** Fine for a demo; a real deployment would need authentication and rate limiting.
-7. **Private data bucket.** Reproducing training requires your own bucket (see [11.3](#113-prepare-the-data)).
+6. **Public, unauthenticated API and public data bucket.** Fine for a demo with public data; a real deployment would need authentication, rate limiting, and a private bucket for any proprietary data.
 
 ### Future work
 
@@ -789,37 +840,3 @@ Work was done on feature branches named `type/short-description`, each merged in
 4. **Compare models** (logistic regression, XGBoost) as separate MLflow runs
 5. **Automate deployment** with CI/CD so merging to `main` rebuilds and redeploys
 6. **Monitor for data drift** once real machine data flows through the API
-
----
-
-## 16. Assignment Requirements Checklist
-
-### Repository
-
-| Requirement | Where |
-|---|---|
-| Code for preprocessing, training, serving and deployment | `src/data.py`, `src/features.py`, `src/train.py`, `api/main.py`, `Dockerfile`, [11.7](#117-deploy-to-google-cloud-run) |
-| `config.yaml` for pipeline configuration | [`config.yaml`](config.yaml), explained in [Section 9](#9-configuration-configyaml) |
-| `requirements.txt` | [`requirements.txt`](requirements.txt) and [`app/requirements.txt`](app/requirements.txt) |
-| Dockerfile that runs the full project, with training and serving entry points | [`Dockerfile`](Dockerfile), [11.6](#116-run-with-docker) |
-| How to train the model | [11.4](#114-train-the-model) |
-| How to build and test the API locally | [11.5](#115-run-and-test-the-api-locally), [11.6](#116-run-with-docker) |
-| How to deploy to the cloud | [11.7](#117-deploy-to-google-cloud-run) |
-| MLflow logging | [Section 8](#8-experiment-tracking-mlflow) |
-| Branches and pull requests | [Section 14](#14-development-workflow) |
-| Clear project structure and commit history | [Section 10](#10-project-structure), [Section 14](#14-development-workflow) |
-
-### Checklist steps
-
-| Step | Done | Where |
-|---|---|---|
-| 1. Dataset, supervised task, target and metric | ✅ | [Section 3](#3-dataset), [Section 6](#metric-f2) |
-| 2. Clean locally, upload to cloud storage, script to download | ✅ | [11.3](#113-prepare-the-data), `src/data.py` → `download_from_gcs()` |
-| 3. Reproducible pipeline: cloud ingestion, preprocessing and feature engineering, train/validation/test split, training and evaluation, config driven | ✅ | `src/train.py`, [Sections 5 to 7](#5-feature-engineering) |
-| 4. Experiment tracking with params, metrics and artifacts (model, plots, config) | ✅ | [Section 8](#8-experiment-tracking-mlflow) |
-| 5. Dockerfile with dependencies and entry points, tested locally | ✅ | [11.6](#116-run-with-docker) |
-| 6. FastAPI `/predict` accepting JSON, tested with curl | ✅ | [11.5](#115-run-and-test-the-api-locally), [Section 12](#12-api-reference) |
-| 7. Deployed to a cloud platform, publicly accessible, confirmed with an HTTP request | ✅ | [11.7](#117-deploy-to-google-cloud-run) |
-| 8. Frontend calling the live API, publicly hosted, linked in the README | ✅ | [11.8](#118-run-and-deploy-the-frontend), links at the top |
-| 9. README: overview, dataset, model and evaluation, cloud services, setup, links | ✅ | This document |
-| Reflect on ethics and limitations | ✅ | [Section 15](#15-ethics-limitations-and-future-work) |

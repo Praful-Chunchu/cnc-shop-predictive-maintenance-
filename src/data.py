@@ -30,7 +30,8 @@ def clean(df):
 
 def download_from_gcs(bucket_name, blob_name, local_path):
 
-    client = storage.Client()
+    # the bucket is publicly readable, so no Google login is needed to download
+    client = storage.Client.create_anonymous_client()
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(blob_name)
     blob.download_to_filename(local_path)
