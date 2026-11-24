@@ -1,41 +1,33 @@
 # CNC Shop Predictive Maintenance
 
-**Predicting milling machine failures before they happen, with a reproducible ML pipeline deployed to the cloud.**
+Predicting milling machine failures from the machine's current settings, using a reproducible ML pipeline deployed on Google Cloud.
 
-| | Link |
-|---|---|
-| **Live app** (Streamlit) | https://cnc-failure-predictor.streamlit.app |
-| **Live API** (Cloud Run) | https://cnc-api-943785405592.us-central1.run.app |
-| **Interactive API docs** | https://cnc-api-943785405592.us-central1.run.app/docs |
-| **Dataset** | [AI4I 2020 Predictive Maintenance (UCI)](https://archive.ics.uci.edu/dataset/601) |
+- Live app: https://cnc-failure-predictor.streamlit.app
+- Live API: https://cnc-api-943785405592.us-central1.run.app (docs at [/docs](https://cnc-api-943785405592.us-central1.run.app/docs))
+- Dataset: [AI4I 2020 Predictive Maintenance, UCI](https://archive.ics.uci.edu/dataset/601)
 
-### What's in this project
+## What's in this project
 
-| Stage | What was built | Tools |
+| Stage | What I built | Tools |
 |---|---|---|
-| **Data** | Cleaned dataset hosted in a public cloud bucket; the pipeline downloads it on every run | Google Cloud Storage |
-| **Pipeline** | Config driven preprocessing, 3 engineered features, stratified train/validation/test split, random forest | Python, pandas, scikit-learn, `config.yaml` |
-| **Tracking** | Every run logs params, metrics, the model, plots and its config | MLflow |
-| **API** | `POST /predict` with input validation, plus a health check | FastAPI, Uvicorn, Pydantic |
-| **Container** | One image with serving and training entry points | Docker |
-| **Deployment** | Public HTTPS API with cost caps | Google Artifact Registry, Cloud Run |
-| **Frontend** | Inputs with synced sliders, failure probability, and an explanation of what's driving the risk | Streamlit Community Cloud |
-| **Workflow** | Feature branches, each merged through a pull request | Git, GitHub |
+| Data | Cleaned dataset in a public cloud bucket, downloaded by the pipeline on every run | Google Cloud Storage |
+| Pipeline | Config driven preprocessing, 3 engineered features, stratified train/validation/test split, random forest | Python, pandas, scikit-learn, `config.yaml` |
+| Tracking | Params, metrics, model, plots and config logged for every run | MLflow |
+| API | `POST /predict` with input validation and a health check | FastAPI, Uvicorn, Pydantic |
+| Container | One image that can either serve the API or train the model | Docker |
+| Deployment | Public HTTPS endpoint with cost limits | Artifact Registry, Cloud Run |
+| Frontend | Inputs with synced sliders, failure probability, and a breakdown of what's driving the risk | Streamlit Community Cloud |
+| Workflow | Feature branches merged through pull requests | Git, GitHub |
 
 ```
 UCI data → clean → Cloud Storage → train (MLflow) → Docker image → Cloud Run API → Streamlit app
 ```
 
----
-
 ## How to Run
 
-There are three ways to run this project, from quickest to most complete.
+### Option 1: Use the live deployment
 
-### Option 1: Use the live deployment (no installation)
-
-1. Open the **live app** (link above), enter machine settings, and click **Predict**.
-2. Call the **live API** directly with curl:
+Open the [live app](https://cnc-failure-predictor.streamlit.app), enter some machine settings and click Predict. Or hit the API directly:
 
 ```bash
 curl -X POST https://cnc-api-943785405592.us-central1.run.app/predict \
@@ -45,7 +37,7 @@ curl -X POST https://cnc-api-943785405592.us-central1.run.app/predict \
 
 ### Option 2: Run locally
 
-No Google account is needed: the training data lives in a **publicly readable** Cloud Storage bucket, and the pipeline downloads it automatically. Requires Python 3.9.
+You don't need a Google account. The training data is in a publicly readable bucket and the pipeline pulls it down automatically. Use Python 3.9.
 
 ```bash
 git clone https://github.com/Praful-Chunchu/cnc-shop-predictive-maintenance-.git
@@ -54,355 +46,150 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-python -m src.train                    # download data from the bucket, train, log to MLflow, save the model
-uvicorn api.main:app --port 8000       # serve the API at http://localhost:8000/docs
+python -m src.train                  # download data, train, log to MLflow, save the model
+uvicorn api.main:app --port 8000     # API at http://localhost:8000/docs
 ```
 
-In separate terminals (with the venv active):
+In other terminals (venv active):
 
 ```bash
 pip install -r app/requirements.txt
-streamlit run app/streamlit_app.py     # frontend at http://localhost:8501 (calls the live API)
-
-mlflow ui --port 5001                  # tracked runs at http://localhost:5001
+streamlit run app/streamlit_app.py   # frontend at http://localhost:8501
+mlflow ui --port 5001                # past runs at http://localhost:5001
 ```
 
 ### Option 3: Run with Docker
 
-Train first (Option 2) so the model file exists, then:
+Train first so `models/model.joblib` exists, then:
 
 ```bash
 docker build --platform linux/amd64 -t cnc-api .
-docker run -p 8000:8080 cnc-api        # API at http://localhost:8000/docs
+docker run -p 8000:8080 cnc-api      # API at http://localhost:8000/docs
 ```
 
-Full explanations of every step are in [Setup and Usage](#11-setup-and-usage).
+More detail on every step is in [Setup Details](#setup-details) below.
 
----
+## Overview
 
-## Table of Contents
+Milling machines cut metal parts with a spinning tool. If one fails partway through a run, the part is usually scrapped and the line stops. In aerospace that can mean throwing away an expensive block of aluminum or titanium. Most shops either service machines on a fixed schedule or fix them after they break, and both waste money.
 
-1. [Overview](#1-overview)
-2. [How It Works](#2-how-it-works)
-3. [Dataset](#3-dataset)
-4. [Key EDA Findings](#4-key-eda-findings)
-5. [Feature Engineering](#5-feature-engineering)
-6. [Model](#6-model)
-7. [Evaluation](#7-evaluation)
-8. [Experiment Tracking (MLflow)](#8-experiment-tracking-mlflow)
-9. [Configuration (config.yaml)](#9-configuration-configyaml)
-10. [Project Structure](#10-project-structure)
-11. [Setup and Usage](#11-setup-and-usage)
-12. [API Reference](#12-api-reference)
-13. [Cloud Services Used](#13-cloud-services-used)
-14. [Development Workflow](#14-development-workflow)
-15. [Ethics, Limitations and Future Work](#15-ethics-limitations-and-future-work)
+The question this project answers is: **given the machine's settings before a run starts, how likely is it to fail?** If the risk is high, an operator can inspect or adjust the machine first instead of finding out the hard way.
 
----
+On the validation set the model reaches an F2 score of 0.793. It catches 39 of 51 failures (recall 0.765), and when it flags a failure it's right 93% of the time (precision 0.929). Details are in [Results](#results).
 
-## 1. Overview
+## Dataset
 
-### The problem
+The [AI4I 2020 dataset](https://archive.ics.uci.edu/dataset/601) (Matzka, 2020) has 10,000 rows, one per machine run. It's synthetic: the authors generated it to reflect real predictive maintenance data, since real factory data is rarely published. There are no missing values.
 
-Milling machines carve metal parts using a spinning cutter. When a machine fails in the middle of a run, the part being made is usually scrapped, the line stops, and the machine may need repairs. In industries like aerospace, a single scrapped part can mean an expensive block of aluminum or titanium thrown away.
-
-### Why it matters
-
-Most shops handle this with fixed maintenance schedules or by reacting after something breaks. Both waste money: either parts get replaced too early, or failures happen without warning. Predicting failure **from the machine's current settings, before the run starts,** lets an operator inspect or adjust the machine only when the risk is actually high.
-
-### What this project does
-
-This project builds a complete machine learning system around that question:
-
-> **Given a machine's current conditions, will this run fail?**
-
-It covers the full path from raw data to a live app:
-
-1. Cleans the data and hosts it in **Google Cloud Storage**
-2. Trains a model through a **reproducible, config driven pipeline**
-3. Tracks every training run with **MLflow**
-4. Serves the model as a **FastAPI** endpoint, packaged with **Docker**
-5. Deploys the API to **Google Cloud Run**
-6. Provides a **Streamlit** app where anyone can enter machine settings and get a prediction
-
-### Results at a glance
-
-| Metric (validation set) | Score |
-|---|---|
-| **F2 (primary metric)** | **0.793** |
-| Recall | 0.765 |
-| Precision | 0.929 |
-| Accuracy | 0.990 |
-
-The model catches about 3 out of 4 failures, and when it raises an alarm it's right about 93% of the time. See [Evaluation](#7-evaluation) for what these numbers mean and why accuracy alone is misleading here.
-
----
-
-## 2. How It Works
-
-```mermaid
-flowchart LR
-    A[UCI raw CSV] --> B[src/data.py<br/>clean]
-    B --> C[(Google Cloud Storage<br/>cleaned CSV)]
-    C --> D[src/train.py<br/>download, features, train]
-    D --> E[MLflow<br/>params, metrics, model]
-    D --> F[models/model.joblib]
-    F --> G[Docker image<br/>FastAPI + model]
-    G --> H[Artifact Registry]
-    H --> I[Cloud Run<br/>public /predict API]
-    I <--> J[Streamlit app<br/>user enters settings]
-```
-
-**In plain words:**
-
-1. **Data:** the raw CSV is cleaned locally, then uploaded to a cloud storage bucket.
-2. **Training:** the pipeline downloads the cleaned data from the bucket, adds engineered features, trains a random forest, logs everything to MLflow and saves the trained model.
-3. **Serving:** the trained model is packaged with a FastAPI app inside a Docker image.
-4. **Deployment:** the image is pushed to Google's container registry and run on Cloud Run, which gives it a public URL.
-5. **Frontend:** the Streamlit app sends the user's inputs to that URL and displays the prediction.
-
----
-
-## 3. Dataset
-
-**Source:** [AI4I 2020 Predictive Maintenance Dataset](https://archive.ics.uci.edu/dataset/601), UCI Machine Learning Repository (Matzka, 2020)
-
-**Important:** this is a **synthetic** dataset. Its creators generated it to reflect real predictive maintenance data from industry, since real factory data is rarely published. It is very clean, with no missing values.
-
-**Size:** 10,000 rows, one row per machine run.
-
-### Columns
-
-| Column (cleaned name) | Meaning | Used as |
+| Column | Meaning | Role |
 |---|---|---|
-| `type` | Product quality grade: **L** (low, 50% of parts), **M** (medium, 30%), **H** (high, 20%) | Input |
-| `air_temp_k` | Room temperature around the machine, in Kelvin | Input |
-| `process_temp_k` | Temperature at the cutting point, in Kelvin | Input |
-| `rotational_speed_rpm` | How fast the cutter spins | Input |
-| `torque_nm` | How hard the machine twists the cutter, in newton meters | Input |
-| `tool_wear_min` | Minutes the current cutting tool has been in use | Input |
-| `machine_failure` | 1 if the run failed, 0 if not | **Target** |
+| `type` | Product quality: L (low, 50% of parts), M (medium, 30%), H (high, 20%) | Input |
+| `air_temp_k` | Air temperature around the machine (K) | Input |
+| `process_temp_k` | Temperature at the cutting point (K) | Input |
+| `rotational_speed_rpm` | Spindle speed | Input |
+| `torque_nm` | Torque on the tool (Nm) | Input |
+| `tool_wear_min` | Minutes the current tool has been in use | Input |
+| `machine_failure` | 1 if the run failed | Target |
 
-### Columns dropped, and why
+I dropped a few columns from the raw file:
 
-| Column | Reason |
-|---|---|
-| `UDI` | Row number. Carries no information about the machine. |
-| `Product ID` | Its first letter duplicates `type` (verified in all 10,000 rows). The rest is a serial number. |
-| `TWF`, `HDF`, `PWF`, `OSF`, `RNF` | **Target leakage.** These five columns record **why** a run failed (tool wear, heat dissipation, power, overstrain, random). They are only known **after** a failure. Feeding them to the model would produce a near perfect score in testing that is useless in practice, since an operator never has these values beforehand. |
+- `UDI` is just a row number.
+- `Product ID` starts with the same letter as `type` in every row, and the rest is a serial number.
+- `TWF`, `HDF`, `PWF`, `OSF` and `RNF` record *why* a run failed (tool wear, heat dissipation, power, overstrain, random). They're only known after the failure happens, so using them as inputs would be target leakage.
 
-### Target imbalance
+Only 339 of the 10,000 runs failed (3.39%), so the classes are very imbalanced. A model that always says "no failure" would be 96.6% accurate and completely useless, which drove most of the modeling choices below.
 
 <img src="docs/images/class_balance.png" alt="Class balance" width="420">
 
-Only **339 of 10,000 runs failed (3.39%)**. This shapes every modeling decision below: a model that always predicts "no failure" would score 96.6% accuracy while catching zero failures.
+## EDA Highlights
 
----
+The full analysis is in [`notebooks/01_eda.ipynb`](notebooks/01_eda.ipynb). The main things I found:
 
-## 4. Key EDA Findings
+- No duplicates once the ID columns are removed.
+- The failure type counts add up to 355 even though there are only 339 failures, so some runs failed for two reasons at once. Heat dissipation was the most common (115), followed by overstrain (98), power (95), tool wear (46) and random (1).
+- Failed runs had higher torque (median 53.7 vs 39.9 Nm), more tool wear (165 vs 107 min) and mostly lower speed (1,365 vs 1,507 rpm), plus a separate group of failures at very high speed.
+- Type L parts failed 3.92% of the time, compared to 2.77% for M and 2.09% for H. L has the lowest overstrain limit.
+- The labels have a couple of inconsistencies. 18 rows flag a random failure but have `machine_failure = 0`, and 9 failures have no failure type flagged at all. I kept `machine_failure` as the source of truth and left these rows in.
 
-Full analysis: [`notebooks/01_eda.ipynb`](notebooks/01_eda.ipynb)
+## Feature Engineering
 
-**Data quality**
-1. No missing values and no duplicate rows (checked after removing the unique ID columns)
-2. `Product ID` prefix matches `type` in every row
+The dataset documentation spells out the physical rule behind each failure type, and several of them depend on two inputs together. A tree can only split on one column at a time, so I added the combinations as features (`src/features.py`):
 
-**How failures happen**
-1. The five failure types overlap: their counts add up to 355, but there are only 339 failures, so some runs failed for two reasons at once.
-2. **Heat dissipation failure is the most common type**, about a third of all failures.
+| Feature | Formula | Failure type | Documented rule |
+|---|---|---|---|
+| `temp_diff` | process temp − air temp | Heat dissipation | Fails when the gap is under 8.6 K and speed is under 1,380 rpm |
+| `power` | torque × speed in rad/s (W) | Power | Fails below 3,500 W or above 9,000 W |
+| `strain` | tool wear × torque | Overstrain | Fails above 11,000 (L), 12,000 (M) or 13,000 (H) |
 
-| Failure type | Count |
+For example, two runs at 1,200 rpm with 30 Nm and 25 Nm of torque look normal on both inputs, but the second one is at 3,142 W, which is below the 3,500 W limit. Only the `power` feature makes that visible in a single split.
+
+All three features separated failures well in EDA, especially `strain`, whose median nearly doubles for failed runs (3,953 vs 7,682). In the trained model they account for about 39% of total feature importance, and `power` ranks second overall.
+
+Each feature only uses values from its own row, so there's no leakage across the train/test split. The API calls the same `add_engineered_features()` function as training, so the features are always computed the same way.
+
+## Model
+
+`src/train.py` builds a scikit-learn pipeline: a `ColumnTransformer` that ordinal encodes `type` (L=0, M=1, H=2) and passes the numeric columns through, followed by a `RandomForestClassifier`. Keeping the encoder inside the pipeline means it gets saved with the model and the API can't skip it.
+
+I went with a random forest because power failures happen at both ends (too low or too high), which a single linear boundary can't capture well, and because trees don't need feature scaling and give feature importance for free.
+
+| Setting | Value | Reason |
+|---|---|---|
+| `n_estimators` | 200 | Stable predictions without being slow |
+| `max_depth` | 10 | Limits overfitting |
+| `class_weight` | balanced | Each failure counts about 28x more than a normal run in training |
+| `random_state` | 42 | Same split and same model every run |
+
+The data is split 70/15/15 into train, validation and test, stratified so each set keeps the 3.4% failure rate. Validation is used for decisions like settings and the threshold. The test set is held back for a final evaluation.
+
+For the metric I used **F2**. A missed failure means a broken machine and a scrapped part, while a false alarm just means a few minutes of inspection, so recall matters more than precision. Recall alone isn't enough though, since flagging every run gets 100% recall. F2 balances the two with extra weight on recall.
+
+The model outputs a failure probability, and a run is flagged when it's at or above the threshold in `config.yaml` (currently 0.5).
+
+## Results
+
+Validation set, 1,500 runs with 51 failures:
+
+| Metric | Score |
 |---|---|
-| Heat dissipation (HDF) | 115 |
-| Overstrain (OSF) | 98 |
-| Power (PWF) | 95 |
-| Tool wear (TWF) | 46 |
-| Random (RNF) | 1 |
+| F2 | 0.793 |
+| Recall | 0.765 |
+| Precision | 0.929 |
+| F1 | 0.839 |
+| Accuracy | 0.990 |
 
-**Inputs vs failure (medians)**
+<img src="docs/images/confusion_matrix.png" alt="Validation confusion matrix" width="460">
 
-| Input | No failure | Failure |
-|---|---|---|
-| Torque (Nm) | 39.9 | **53.7** |
-| Tool wear (min) | 107 | **165** |
-| Rotational speed (rpm) | 1,507 | **1,365** (plus a separate cluster of failures at very high speed) |
-| Air / process temperature | small differences on their own | |
+The model misses 12 of the 51 failures and raises only 3 false alarms. That's more cautious than you'd want for maintenance, where an extra inspection is cheap. Lowering the threshold should trade a few more false alarms for fewer misses, and that's the first thing I'd tune next.
 
-**Failure rate by product type:** L 3.92%, M 2.77%, H 2.09%. Low quality parts fail almost twice as often as high quality parts, because they have the lowest overstrain limit.
+<img src="docs/images/feature_importance.png" alt="Feature importance" width="460">
 
-**Label inconsistencies** (kept as is, documented as a limitation)
+Speed, torque and tool wear drive most predictions, which matches the EDA. `type` barely matters directly because its effect mostly shows up through `strain`.
 
-| | `machine_failure` = 0 | `machine_failure` = 1 |
-|---|---|---|
-| No failure type flagged | 9,643 | **9** (failed, no reason recorded) |
-| A failure type flagged | **18** (random failure flagged, no failure) | 330 |
+Two example requests to the live API:
 
-`machine_failure` is treated as the source of truth. The failure type columns are never model inputs, so these 27 rows simply carry their `machine_failure` label.
-
----
-
-## 5. Feature Engineering
-
-Code: [`src/features.py`](src/features.py) → `add_engineered_features()`
-
-The dataset documentation describes the physical rule behind each failure type. Several rules depend on **combinations** of inputs, which a tree model can only approximate by stacking many single column splits. Three features hand the model those combinations directly.
-
-| Feature | Formula | Targets | Rule from the dataset docs | EDA evidence |
-|---|---|---|---|---|
-| `temp_diff` | process temp − air temp | Heat dissipation failure | Fails when the gap is under 8.6 K **and** speed is under 1,380 rpm | Lower for failures (median 9.3 vs 9.8 K) |
-| `power` | torque × speed in rad/s (watts) | Power failure | Fails when power is under 3,500 W **or** over 9,000 W | Normal runs sit inside the 3,500 to 9,000 W safe range; failures fall outside it on both ends |
-| `strain` | tool wear × torque | Overstrain failure | Fails when it passes 11,000 (L), 12,000 (M) or 13,000 (H) | **Strongest separator:** median nearly doubles (3,953 → 7,682) |
-
-**Worked example of why this helps (power):**
-
-| Run | Speed | Torque | Power | Outcome |
-|---|---|---|---|---|
-| A | 1,200 rpm | 30 Nm | 3,770 W | OK |
-| B | 1,200 rpm | 25 Nm | 3,142 W | Fails (under 3,500 W) |
-
-Same speed, and torque values that both look normal on their own. Only power reveals the problem.
-
-**Did they help?** Yes. In the trained model, the three engineered features together account for about **39% of total feature importance**, and `power` is the **second most important feature** overall (see [Evaluation](#7-evaluation)).
-
-**Leakage safety:** each feature uses only values from its own row, so computing it before or after the train/test split gives identical results.
-
-**Training and serving consistency:** the API calls the **same** `add_engineered_features()` function used in training, so the model always sees features computed the same way (no training serving skew).
-
----
-
-## 6. Model
-
-### Pipeline
-
-Code: [`src/train.py`](src/train.py)
-
-```
-Pipeline
-├── preprocessor: ColumnTransformer
-│     ├── type    → OrdinalEncoder (L=0, M=1, H=2)
-│     └── numeric → passthrough
-└── model: RandomForestClassifier
-```
-
-The encoder lives **inside** the saved pipeline, so the API can never forget to apply it.
-
-### Why a random forest
-
-1. **Handles patterns on both ends.** Power failures happen when power is too low **or** too high. A linear model like logistic regression draws one straight boundary and struggles with this. Trees simply split twice.
-2. **No feature scaling needed.** Torque in the 40s and power in the thousands work as is.
-3. **Built in feature importance** for explaining predictions.
-
-### Settings (from `config.yaml`)
-
-| Setting | Value | Why |
-|---|---|---|
-| `n_estimators` | 200 | Enough trees for a stable vote; gains flatten past a few hundred |
-| `max_depth` | 10 | Caps how many questions each tree asks in a row, limiting overfitting |
-| `class_weight` | balanced | Each failure counts about 28 times more than a normal run during training (weights ≈ 14.75 vs 0.52), so the model can't ignore the rare class |
-| `random_state` | 42 | Same data split and same forest every run |
-
-### Data split
-
-**70% train / 15% validation / 15% test**, stratified so each set keeps the 3.4% failure rate (about 51 failures each in validation and test).
-
-1. **Train:** the model learns from it
-2. **Validation:** used for decisions such as settings and the decision threshold
-3. **Test:** held out and reserved for a single final evaluation
-
-### Metric: F2
-
-| Mistake | Real world cost |
+| Scenario | Failure probability |
 |---|---|
-| **Missed failure** (false negative) | Machine breaks mid run: scrapped part, downtime, possible damage |
-| **False alarm** (false positive) | A technician inspects a healthy machine for a few minutes |
+| Fresh tool, normal settings (L, 298.2 K, 308.7 K, 1,408 rpm, 46.3 Nm, 3 min) | 0.04% |
+| Small temperature gap at low speed, worn tool, high torque (L, 302.1 K, 310.1 K, 1,301 rpm, 60.9 Nm, 220 min) | 91.9% |
 
-Missed failures cost far more, so recall matters most. But recall alone can be gamed: predicting "fail" for everything gives 100% recall and about 3% precision. **F2** combines both, weighting recall more heavily.
+The second one breaks two documented rules at once: an 8.0 K temperature gap below 1,380 rpm, and strain of 13,394, which is over the 11,000 limit for type L.
 
-### Decision threshold
+## Experiment Tracking
 
-The model outputs a **failure probability**. A run is flagged as a failure when that probability is at least the threshold in `config.yaml` (currently **0.5**).
+Every training run is logged to the MLflow experiment `cnc-failure-prediction`:
 
----
+- **Params:** `n_estimators`, `max_depth`, `class_weight`, `test_size`, `val_size`
+- **Metrics:** `val_f2`, `val_recall`, `val_precision`, `val_f1`, `val_accuracy`
+- **Model:** the full pipeline, with an input example so the expected columns are recorded
+- **Plots:** confusion matrix and feature importance
+- **Config:** a copy of `config.yaml`, so any run can be traced back to its exact settings
 
-## 7. Evaluation
+To browse runs, use `mlflow ui --port 5001` and open http://localhost:5001. I use 5001 because AirPlay on macOS usually holds port 5000.
 
-**Validation set results** (1,500 runs, 51 failures, threshold 0.5)
+## Configuration
 
-| Metric | Score | Meaning |
-|---|---|---|
-| **F2** | **0.793** | Primary metric |
-| Recall | 0.765 | Caught 39 of 51 real failures |
-| Precision | 0.929 | When it flags a failure, it's right 93% of the time |
-| F1 | 0.839 | |
-| Accuracy | 0.990 | Inflated by the many easy "no failure" cases |
-
-**Confusion matrix**
-
-<img src="docs/images/confusion_matrix.png" alt="Validation confusion matrix" width="480">
-
-| | Predicted OK | Predicted failure |
-|---|---|---|
-| **Actually OK** | 1,446 | 3 false alarms |
-| **Actually failed** | **12 missed** | 39 caught |
-
-**Interpretation:** the model is cautious. It rarely raises a false alarm, but it misses about 1 in 4 failures. For maintenance, the opposite trade is preferable. The clearest next step is lowering the decision threshold on the validation set to trade a few more false alarms for fewer misses (see [Future Work](#future-work)).
-
-**Feature importance**
-
-<img src="docs/images/feature_importance.png" alt="Feature importance" width="480">
-
-| Feature | Importance |
-|---|---|
-| rotational_speed_rpm | 21.5% |
-| **power** (engineered) | **18.6%** |
-| torque_nm | 17.9% |
-| tool_wear_min | 14.8% |
-| **strain** (engineered) | **11.0%** |
-| **temp_diff** (engineered) | **9.2%** |
-| air_temp_k | 4.3% |
-| process_temp_k | 2.2% |
-| type | 0.5% |
-
-Speed, torque and tool wear drive most predictions, matching the EDA. The engineered features add about 39% combined. `type` contributes little directly, since its effect mostly shows up through the overstrain limits that `strain` captures.
-
-**Example predictions from the live API**
-
-| Scenario | Inputs | Failure probability |
-|---|---|---|
-| Fresh tool, normal settings | L, 298.2 K, 308.7 K, 1,408 rpm, 46.3 Nm, 3 min | **0.04%** |
-| Small temperature gap, low speed, worn tool, high torque | L, 302.1 K, 310.1 K, 1,301 rpm, 60.9 Nm, 220 min | **91.9%** |
-
-The second case trips two documented rules at once: a temperature gap of 8.0 K at under 1,380 rpm (heat dissipation), and strain of 13,394, above the 11,000 limit for type L (overstrain).
-
----
-
-## 8. Experiment Tracking (MLflow)
-
-Every training run is recorded automatically in the MLflow experiment **`cnc-failure-prediction`**.
-
-| Logged | What | Why |
-|---|---|---|
-| **Params** | `n_estimators`, `max_depth`, `class_weight`, `test_size`, `val_size` | Know exactly which settings produced a result |
-| **Metrics** | `val_f2`, `val_recall`, `val_precision`, `val_f1`, `val_accuracy` | Compare runs side by side |
-| **Model** | The full trained pipeline, with an input example and signature | Reload any past model; the example documents the exact input columns |
-| **Plots** | `confusion_matrix.png`, `feature_importance.png` | See at a glance how each run performed and what drove it |
-| **Config** | `config.yaml` | Every run carries its complete configuration, for reproducibility |
-
-MLflow also stores the model's Python environment (`requirements.txt`, `conda.yaml`, `python_env.yaml`) with each run.
-
-**View the runs:**
-
-```bash
-mlflow ui --port 5001
-```
-
-Then open http://localhost:5001. (Port 5001 is used because macOS AirPlay often occupies port 5000.)
-
----
-
-## 9. Configuration (config.yaml)
-
-All settings live in one file, so experiments change numbers, never code. Code holds the **logic**; config holds the **values**. No secrets are stored here.
+All the settings live in `config.yaml`, so trying something different means changing a number, not the code.
 
 ```yaml
 data:
@@ -439,135 +226,58 @@ mlflow:
   experiment_name: cnc-failure-prediction
 ```
 
-| Section | Controls |
-|---|---|
-| `data` | Local file paths and the cloud bucket location |
-| `features` | The target, which columns the model uses, and the order for encoding `type` |
-| `split` | Train / validation / test sizes, random seed, stratification |
-| `model` | Algorithm settings and where the trained model is saved |
-| `evaluation` | Primary metric and the decision threshold |
-| `mlflow` | Experiment name |
-
----
-
-## 10. Project Structure
+## Project Structure
 
 ```
 cnc-shop-predictive-maintenance/
-├── config.yaml              # all pipeline settings
-├── requirements.txt         # pinned packages for the pipeline and API
-├── Dockerfile               # image for serving (default) and training
-├── .dockerignore            # keeps the venv, data and notebooks out of the image
-├── .gitignore
-├── README.md
-│
+├── config.yaml
+├── requirements.txt
+├── Dockerfile
+├── .dockerignore
 ├── data/
 │   ├── raw/                 # original UCI CSV (gitignored)
-│   └── cleaned/             # cleaned CSV (gitignored; source of truth is GCS)
-│
+│   └── cleaned/             # cleaned CSV (gitignored, the bucket is the source of truth)
 ├── notebooks/
-│   └── 01_eda.ipynb         # exploratory data analysis
-│
-├── src/                     # the pipeline
-│   ├── __init__.py
-│   ├── data.py              # load raw data, clean it, download from GCS
-│   ├── features.py          # column lists, leakage drops, engineered features
-│   └── train.py             # split, train, evaluate, log to MLflow, save model
-│
+│   └── 01_eda.ipynb
+├── src/
+│   ├── data.py              # load, clean, download from GCS
+│   ├── features.py          # dropped columns and engineered features
+│   └── train.py             # split, train, evaluate, log to MLflow, save
 ├── api/
-│   └── main.py              # FastAPI app: POST /predict, GET /
-│
+│   └── main.py              # FastAPI app
 ├── app/
-│   ├── streamlit_app.py     # frontend
-│   └── requirements.txt     # frontend only packages (deployed separately)
-│
-├── docs/
-│   └── images/              # charts used in this README
-│
-└── models/                  # trained model.joblib (gitignored)
+│   ├── streamlit_app.py
+│   └── requirements.txt     # deployed separately, only needs streamlit and requests
+├── docs/images/             # charts used in this README
+└── models/                  # model.joblib (gitignored)
 ```
 
-**Design choices**
-1. **One file per pipeline stage** in `src/`, so each has a single job
-2. **API separate from `src/`:** training runs once, serving runs continuously
-3. **Frontend separate, with its own requirements:** it deploys to Streamlit Cloud and only needs `streamlit` and `requests`
-4. **Data and models are gitignored:** the bucket is the source of truth for data, and models are rebuilt by the pipeline
+## Setup Details
 
----
+### Preparing the data
 
-## 11. Setup and Usage
+The cleaned data is already in a public bucket, so you can skip this unless you want to recreate it or host it yourself.
 
-### 11.1 Prerequisites
-
-| Tool | Used for |
-|---|---|
-| Python 3.9 | Matches the Docker image and pinned package versions |
-| Git | Cloning the repo |
-| Docker Desktop | Building and running the container |
-| Google Cloud CLI (`gcloud`) | Cloud Storage, Artifact Registry, Cloud Run |
-| A Google Cloud project with billing enabled | Only needed to host your own data or deploy your own copy |
-
-### 11.2 Clone and install
-
-```bash
-git clone https://github.com/Praful-Chunchu/cnc-shop-predictive-maintenance-.git
-cd cnc-shop-predictive-maintenance-
-
-python3 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-### 11.3 Prepare the data
-
-**The cleaned data is already hosted in a public bucket,** so you can skip straight to [11.4](#114-train-the-model). The steps below show how it got there, or how to host it in your own bucket.
-
-**1. Download the raw data** from [UCI](https://archive.ics.uci.edu/dataset/601) and save it as `data/raw/ai4i2020.csv`.
-
-**2. Clean it** (drops ID and leakage columns, renames columns; file paths come from `config.yaml`):
-
-```bash
-python -m src.data
-```
-
-Expected output: `Saved 10000 rows, 7 columns to data/cleaned/ai4i2020_cleaned.csv`
-
-**3. Upload it to Cloud Storage** (one time):
+1. Download the raw CSV from [UCI](https://archive.ics.uci.edu/dataset/601) and save it as `data/raw/ai4i2020.csv`.
+2. Run `python -m src.data`. It drops the ID and leakage columns, renames everything to snake_case and writes `data/cleaned/ai4i2020_cleaned.csv`.
+3. Upload it to your own bucket and make it publicly readable:
 
 ```bash
 gcloud auth login
 gcloud config set project <YOUR_PROJECT_ID>
 gcloud storage buckets create gs://<YOUR_BUCKET> --location=us-central1
 gcloud storage cp data/cleaned/ai4i2020_cleaned.csv gs://<YOUR_BUCKET>/cleaned/ai4i2020_cleaned.csv
-```
-
-**4. Make it publicly readable** (read only: nobody else can upload, change or delete files):
-
-```bash
 gcloud storage buckets add-iam-policy-binding gs://<YOUR_BUCKET> \
   --member=allUsers --role=roles/storage.objectViewer
 ```
 
-Then set `gcs_bucket` in `config.yaml` to your bucket name.
+Then update `gcs_bucket` in `config.yaml`.
 
-### 11.4 Train the model
+### Training
 
-```bash
-python -m src.train
-```
+`python -m src.train` downloads the cleaned CSV from the bucket (anonymously, no login needed), adds the engineered features, splits the data, trains, prints the validation metrics, logs everything to MLflow and saves the pipeline to `models/model.joblib`. Run it with `python -m` from the repo root so the `src` imports resolve.
 
-No Google login is needed. Because the bucket is publicly readable, `download_from_gcs()` in `src/data.py` uses an anonymous client.
-
-**What happens:**
-1. Downloads the cleaned CSV from the bucket
-2. Adds the engineered features
-3. Splits 70/15/15 (stratified)
-4. Trains the pipeline
-5. Prints validation metrics and the confusion matrix
-6. Logs the run to MLflow, including the confusion matrix and feature importance plots
-7. Saves the pipeline to `models/model.joblib`
-
-Expected output (abbreviated):
+Expected output:
 
 ```
 Downloaded gs://cnc-pm-data-praful/cleaned/ai4i2020_cleaned.csv to data/cleaned/ai4i2020_cleaned.csv
@@ -580,17 +290,13 @@ Accuracy:  0.990
 Model saved to models/model.joblib
 ```
 
-**Run scripts with `python -m` from the repo root** so imports like `from src.features import ...` resolve correctly.
-
-### 11.5 Run and test the API locally
+### Running the API locally
 
 ```bash
 uvicorn api.main:app --reload --port 8000
 ```
 
-1. Health check: open http://localhost:8000 → `{"status": "ok"}`
-2. Interactive docs: open http://localhost:8000/docs → **POST /predict** → **Try it out**
-3. Or with curl, in a second terminal:
+Check http://localhost:8000 for the health check and http://localhost:8000/docs to try requests in the browser, or use curl:
 
 ```bash
 curl -X POST http://localhost:8000/predict \
@@ -598,27 +304,18 @@ curl -X POST http://localhost:8000/predict \
   -d '{"type": "L", "air_temp_k": 298.2, "process_temp_k": 308.7, "rotational_speed_rpm": 1408, "torque_nm": 46.3, "tool_wear_min": 3}'
 ```
 
-Expected: `{"failure_probability":0.0004303586428080528,"prediction":0}`
+This should return `{"failure_probability":0.0004303586428080528,"prediction":0}`.
 
-### 11.6 Run with Docker
+### Docker
 
-The image contains the API, the trained model and all dependencies. **Train first**, so `models/model.joblib` exists before building.
-
-**Build** (the platform flag makes the image run on Cloud Run, even when built on an Apple Silicon Mac):
+The image contains the API, the trained model and all dependencies, so train before building. The `--platform` flag is there so an image built on an Apple Silicon Mac still runs on Cloud Run.
 
 ```bash
 docker build --platform linux/amd64 -t cnc-api .
-```
-
-**Serve the API** (default entry point):
-
-```bash
 docker run -p 8000:8080 cnc-api
 ```
 
-Then test at http://localhost:8000/docs. `-p 8000:8080` connects port 8000 on your computer to port 8080 inside the container.
-
-**Train inside the container** (training entry point):
+The default command serves the API. To train inside the container instead, override the command and mount the data and models folders so the results end up on your machine:
 
 ```bash
 docker run --rm \
@@ -627,66 +324,23 @@ docker run --rm \
   cnc-api python -m src.train
 ```
 
-| Part | Why |
-|---|---|
-| `python -m src.train` | Overrides the default command, so the container trains instead of serving |
-| `-v data:/app/data` | Gives the container a folder to save the downloaded CSV into |
-| `-v models:/app/models` | Saves the newly trained model back to your computer |
-| `--rm` | Removes the container when training finishes |
+The Dockerfile copies `requirements.txt` and installs packages before copying the code, so changing code doesn't trigger a full reinstall. The trained model is copied into the image, which means containers start right away and all serve the same model.
 
-No credentials are needed, since the bucket is publicly readable.
+### Deploying to Cloud Run
 
-**How the Dockerfile works**
-
-```dockerfile
-FROM python:3.9-slim                  # start from slim Linux with Python 3.9
-WORKDIR /app                          # project folder inside the container
-COPY requirements.txt .               # copy dependencies first...
-RUN pip install --no-cache-dir -r requirements.txt   # ...so this layer is cached
-COPY config.yaml .
-COPY src/ src/
-COPY api/ api/
-COPY models/ models/                  # the trained model is baked into the image
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8080"]
-```
-
-1. **Requirements are copied before the code** so editing code doesn't reinstall every package
-2. **The trained model is copied into the image,** so containers start instantly and all serve the same validated model
-3. **`0.0.0.0`** accepts requests from outside the container; **port 8080** is Cloud Run's default
-
-### 11.7 Deploy to Google Cloud Run
-
-**Mental model:** the image has to travel from your computer to Google's servers.
-
-```
-Your computer → Artifact Registry → Cloud Run → public URL
-   (build)        (image storage)     (runs it)
-```
-
-**One time setup**
+One time setup:
 
 ```bash
-# turn on the services
 gcloud services enable storage.googleapis.com artifactregistry.googleapis.com run.googleapis.com
-
-# create a Docker image repository
-gcloud artifacts repositories create cnc-repo \
-  --repository-format=docker --location=us-central1
-
-# let Docker push to it using your gcloud login
+gcloud artifacts repositories create cnc-repo --repository-format=docker --location=us-central1
 gcloud auth configure-docker us-central1-docker.pkg.dev
 ```
 
-**Each deployment**
+Each deployment (bump the tag for new versions):
 
 ```bash
-# label the image with its full registry address
 docker tag cnc-api us-central1-docker.pkg.dev/<YOUR_PROJECT_ID>/cnc-repo/cnc-api:v1
-
-# upload it
 docker push us-central1-docker.pkg.dev/<YOUR_PROJECT_ID>/cnc-repo/cnc-api:v1
-
-# run it on Cloud Run
 gcloud run deploy cnc-api \
   --image us-central1-docker.pkg.dev/<YOUR_PROJECT_ID>/cnc-repo/cnc-api:v1 \
   --region us-central1 \
@@ -696,168 +350,97 @@ gcloud run deploy cnc-api \
   --port 8080
 ```
 
-| Flag | Why |
-|---|---|
-| `--allow-unauthenticated` | Anyone can call the API, including the Streamlit app |
-| `--max-instances 1` | Caps cost: never more than one running container |
-| `--min-instances 0` | Scales to zero when idle, so it costs nothing unused. The first request after idle takes a few extra seconds |
-| `--port 8080` | Matches the Dockerfile |
+`--max-instances 1` caps cost, and `--min-instances 0` lets the service scale to zero when nobody is using it (the first request after a while takes a few extra seconds). The deploy prints a service URL, and calling it with the same curl request as above returns the same result as running locally.
 
-The command prints a **Service URL**. Test it:
-
-```bash
-curl -X POST https://cnc-api-943785405592.us-central1.run.app/predict \
-  -H "Content-Type: application/json" \
-  -d '{"type": "L", "air_temp_k": 298.2, "process_temp_k": 308.7, "rotational_speed_rpm": 1408, "torque_nm": 46.3, "tool_wear_min": 3}'
-```
-
-Response from the live deployment:
-
-```json
-{"failure_probability":0.0004303586428080528,"prediction":0}
-```
-
-Identical to the local result, confirming the container behaves the same everywhere.
-
-**To update later:** retrain, rebuild, then repeat the three "each deployment" commands with a new tag such as `:v2`.
-
-### 11.8 Run and deploy the frontend
-
-**Locally:**
+### Frontend
 
 ```bash
 pip install -r app/requirements.txt
 streamlit run app/streamlit_app.py
 ```
 
-Opens at http://localhost:8501. The app calls the **live Cloud Run API**, so it works without running the API locally.
+The app calls the live Cloud Run API, so the API doesn't need to be running locally. To deploy it, create an app on [share.streamlit.io](https://share.streamlit.io) pointing at this repo, branch `main`, file `app/streamlit_app.py`.
 
-**Deploy to Streamlit Community Cloud:**
-1. Go to [share.streamlit.io](https://share.streamlit.io) and sign in with GitHub
-2. **Create app** → select this repo, branch `main`, main file `app/streamlit_app.py`
-3. Under **Advanced settings**, choose Python 3.9
-4. Deploy, and use the generated `*.streamlit.app` link
+Each input has a number box and a slider that stay in sync, limited to the range seen in the training data. Clicking Predict sends the six values to `/predict` and shows the failure probability. Below that, a panel shows the values behind each failure rule (temperature gap, power, strain, tool wear) and whether they're within limits, so it's clear *why* the risk is high. That panel uses the same formulas as `src/features.py`, but the prediction itself always comes from the model.
 
-**How the app works**
+## API Reference
 
-1. **Inputs:** the user picks a product type, then sets the 5 numeric inputs by **typing a value or dragging a slider**. Each box and its slider stay in sync, and both are limited to the ranges seen in the training data.
-2. **Prediction:** clicking **Predict** sends the 6 values as JSON to the live `/predict` endpoint. The app shows the failure probability, a progress bar, and a clear high risk or low risk message. If any input changes afterward, the app keeps the last result on screen and notes that it needs updating.
-3. **"What's driving this prediction":** a panel shows the values behind each documented failure rule (temperature gap, power, strain, tool wear), each marked OK or at risk against its limit. An operator who sees a high risk also sees **why**, for example "strain 13,394, above the 11,000 limit for type L," and knows what to fix.
-4. **Transparency:** an expandable section shows the exact request sent to the API.
+`GET /` returns `{"status": "ok"}`.
 
-The panel uses the same formulas as `src/features.py`. It explains the inputs in terms of the documented failure rules; the prediction itself always comes from the model.
+`POST /predict` takes the six raw inputs and returns the failure probability and a 0/1 prediction. The engineered features are computed server side.
 
----
-
-## 12. API Reference
-
-**Base URL:** https://cnc-api-943785405592.us-central1.run.app
-
-### `GET /`
-
-Health check.
+Request:
 
 ```json
-{"status": "ok"}
+{
+  "type": "L",
+  "air_temp_k": 298.2,
+  "process_temp_k": 308.7,
+  "rotational_speed_rpm": 1408,
+  "torque_nm": 46.3,
+  "tool_wear_min": 3
+}
 ```
 
-### `POST /predict`
+Response:
 
-Predicts the failure risk for one machine run. The client sends only the **6 raw inputs**; the API computes `temp_diff`, `power` and `strain` itself, using the same function as training.
+```json
+{"failure_probability": 0.0004303586428080528, "prediction": 0}
+```
 
-**Request body**
+`type` must be `L`, `M` or `H`, and the rest must be numbers. Missing fields, text in a number field, or any other product type return a 422 with a message pointing at the problem field.
 
-| Field | Type | Example |
-|---|---|---|
-| `type` | string (`L`, `M` or `H`) | `"L"` |
-| `air_temp_k` | number | `298.2` |
-| `process_temp_k` | number | `308.7` |
-| `rotational_speed_rpm` | number | `1408` |
-| `torque_nm` | number | `46.3` |
-| `tool_wear_min` | number | `3` |
+## Cloud Services
 
-**Response**
-
-| Field | Type | Meaning |
-|---|---|---|
-| `failure_probability` | number (0 to 1) | The model's estimated chance of failure |
-| `prediction` | 0 or 1 | 1 if the probability is at or above the threshold in `config.yaml` |
-
-**Validation:** inputs are checked by a Pydantic model before they reach the model. Each of these returns **HTTP 422** with a message naming the problem field:
-
-1. A missing field
-2. Text where a number is expected (for example `"torque_nm": "high"`)
-3. A product type other than `L`, `M` or `H` (for example `"type": "X"` returns *"Input should be 'L', 'M' or 'H'"*)
-
----
-
-## 13. Cloud Services Used
-
-| Service | Role in this project |
+| Service | Used for |
 |---|---|
-| **Google Cloud Storage** | Hosts the cleaned dataset (`gs://cnc-pm-data-praful/cleaned/`), publicly readable. The training pipeline downloads it at the start of every run, with no login required. |
-| **Artifact Registry** | Stores the Docker image (`cnc-repo/cnc-api`) so Cloud Run can pull it |
-| **Google Cloud Run** | Runs the API container and provides the public HTTPS URL. Scales to zero when idle. |
-| **Streamlit Community Cloud** | Hosts the frontend for free |
+| Cloud Storage | Hosting the cleaned dataset (`gs://cnc-pm-data-praful/cleaned/`), publicly readable |
+| Artifact Registry | Storing the Docker image |
+| Cloud Run | Running the API at a public HTTPS URL |
+| Streamlit Community Cloud | Hosting the frontend |
 
-**Region:** `us-central1` for all Google Cloud resources.
+Everything on Google Cloud is in `us-central1`. To keep costs under control there's an $8/month spend cap on Cloud Run, a $10/month budget alert on the project, and the instance limits mentioned above.
 
-**Cost controls**
-1. A **spend cap** of $8/month on Cloud Run, which pauses the service if reached
-2. A **budget alert** at $10/month across the project, with emails at 50%, 90% and 100%
-3. `--max-instances 1` and `--min-instances 0` on Cloud Run
+## Development Workflow
 
----
+Each piece was built on its own branch and merged into `main` through a pull request:
 
-## 14. Development Workflow
-
-Work was done on feature branches named `type/short-description`, each merged into `main` through a pull request.
-
-| PR | Branch | Adds |
+| PR | Branch | Contents |
 |---|---|---|
-| #1 | `feature/eda-and-data-prep` | EDA notebook, cleaning step, engineered features |
-| #2 | `feature/training-pipeline` | `config.yaml`, training pipeline, model saving |
+| #1 | `feature/eda-and-data-prep` | EDA notebook, cleaning, engineered features |
+| #2 | `feature/training-pipeline` | Config file and training pipeline |
 | #3 | `feature/experiment-tracking` | MLflow tracking |
-| #4 | `feature/fastapi-predict` | FastAPI `/predict` endpoint and health check |
-| #5 | `feature/docker` | Dockerfile and .dockerignore |
-| #6 | `feature/gcs-data-storage` | Cloud Storage download in the pipeline |
-| #7 | `feature/streamlit-frontend` | Streamlit app with synced inputs and an explanation panel |
-| #8 | `feature/plots-and-input-validation` | MLflow plots, product type validation in the API, config driven cleaning paths |
-| #9 | `docs/readme` | This README and its charts |
-| #10 | `docs/readme` | Anonymous download from the public bucket, first version of the run instructions |
-| #11 | `docs/final-touches` | How to Run section, live app link |
+| #4 | `feature/fastapi-predict` | FastAPI endpoint |
+| #5 | `feature/docker` | Dockerfile |
+| #6 | `feature/gcs-data-storage` | Downloading data from Cloud Storage |
+| #7 | `feature/streamlit-frontend` | Streamlit app |
+| #8 | `feature/plots-and-input-validation` | MLflow plots, API input validation, config driven cleaning |
+| #9 | `docs/readme` | README and charts |
+| #10 | `docs/readme` | Public bucket download, run instructions |
+| #11 | `docs/final-touches` | README cleanup and live app link |
 
-**Reproducibility practices**
-1. All settings in `config.yaml`, logged with every MLflow run
-2. Fixed random seed for the split and the model
-3. Pinned package versions in `requirements.txt`
-4. Docker image built for a fixed Python version and platform
+Settings come from `config.yaml` and get logged with each run, random seeds are fixed, package versions are pinned, and the Docker image is built for a fixed Python version and platform, so runs are reproducible.
 
----
+## Ethics and Limitations
 
-## 15. Ethics, Limitations and Future Work
+A missed failure here isn't just a cost problem. If the app says "low risk" and the machine breaks anyway, it could damage equipment or hurt someone nearby. This should help people decide when to inspect a machine, not replace inspections or a technician's judgment. There's also a risk that operators start trusting the green message over what they can see themselves, which is part of why the app shows a probability and the reasoning behind it instead of just a yes or no.
 
-### Ethical considerations
+The risk isn't spread evenly either. Type L parts fail almost twice as often as type H, so if the model does worse on one type, that group absorbs more of the missed failures. I'd want to check performance per type before using this anywhere real.
 
-1. **Missed failures are a safety issue, not just a cost issue.** A false "low risk" could lead someone to run a machine that then breaks, possibly damaging equipment or injuring someone nearby. This tool should **support** maintenance decisions, never replace inspections, safety checks or a technician's judgment.
-2. **Automation bias.** Operators may start trusting the green "low risk" message over their own observations. The app shows a probability, not just a yes or no, and explains which physical limits are close, so the operator stays engaged with the reasoning instead of blindly following a label.
-3. **Uneven risk across product types.** Type L parts fail almost twice as often as type H. If the model performs worse for one type, that group carries more of the missed failure risk. Performance should be checked per type before any real use.
-4. **Responsibility.** If a prediction is wrong and something breaks, the decision still belongs to the people operating the machine. Any real deployment would need clear policies on how predictions are used.
+Other limitations:
 
-### Limitations
+- The data is synthetic. The model would need to be retrained and validated on real machine data before anyone relied on it.
+- Some labels are inconsistent (the 18 and 9 rows mentioned in the EDA section).
+- Random failures happen regardless of conditions, so no model can predict them.
+- The sliders keep inputs within the training range, but the API accepts any number, and predictions far outside that range aren't reliable.
+- The scores above are on the validation set. The test set hasn't been used yet.
+- The API and the data bucket are public. That's fine for a demo with public data, but a real deployment would need authentication, rate limiting and private storage.
 
-1. **Synthetic data.** The model learned rules from a simulated dataset. It **must be retrained and validated on real machine data** before being trusted on a real production line.
-2. **Label inconsistencies.** 18 rows flag a random failure with no recorded failure, and 9 failures have no recorded cause (see [EDA](#4-key-eda-findings)).
-3. **Random failures can't be predicted.** By design, about 0.1% of runs fail regardless of conditions.
-4. **Inputs outside the training ranges** may give unreliable predictions. The app's sliders are limited to the ranges seen in the data, but the API accepts any number for the 5 numeric inputs.
-5. **Validation scores only.** The test set is held out and has not yet been used for a final score.
-6. **Public, unauthenticated API and public data bucket.** Fine for a demo with public data; a real deployment would need authentication, rate limiting, and a private bucket for any proprietary data.
+## Future Work
 
-### Future work
-
-1. **Tune the decision threshold** on the validation set to raise recall, then report a single final **test set** score
-2. **Predict the failure type** (heat, power, overstrain, tool wear) as a multi class problem, so operators know what to inspect
-3. **Explain each individual prediction** with SHAP values, showing exactly how much each input pushed that specific prediction up or down
-4. **Compare models** (logistic regression, XGBoost) as separate MLflow runs
-5. **Automate deployment** with CI/CD so merging to `main` rebuilds and redeploys
-6. **Monitor for data drift** once real machine data flows through the API
+- Tune the decision threshold on validation to improve recall, then report a final test score
+- Predict the failure type as a multi class problem so operators know what to check
+- Add SHAP values to explain individual predictions
+- Compare against logistic regression and XGBoost as separate MLflow runs
+- Set up CI/CD to rebuild and redeploy on merges to `main`
+- Monitor for data drift once real data comes through the API
